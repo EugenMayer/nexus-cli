@@ -53,7 +53,10 @@ func newRmCommand() *cli.Command {
 				return err
 			}
 
-			client := conn.Client()
+			client, err := conn.Client(ctx)
+			if err != nil {
+				return err
+			}
 			fmt.Fprintln(os.Stderr, "scanning repository...")
 			assets, err := client.ListAssets(ctx, conn.Repo)
 			if err != nil {

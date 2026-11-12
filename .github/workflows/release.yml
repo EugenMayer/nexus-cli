@@ -1,0 +1,36 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Check the tag is semver
+        run: |
+          echo "${{ github.ref_name }}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
+            || { echo "tag ${{ github.ref_name }} is not vMAJOR.MINOR.PATCH[-pre], Go modules would ignore it"; exit 1; }
+      - run: make fmt-check
+      - run: make vet
+      - run: make test
+      - run: make dist VERSION=${{ github.ref_name }}
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=
+          case "${{ github.ref_name }}" in *-*) prerelease=--prerelease ;; esac
+          gh release create "${{ github.ref_name }}" dist/* --title "${{ github.ref_name }}" --generate-notes $prerelease
+      - name: Publish the Go module version
+        run: make publish-module VERSION=${{ github.ref_name }}

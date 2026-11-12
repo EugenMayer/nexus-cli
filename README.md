@@ -8,7 +8,8 @@ The client is organized as a tree of commands. Today it implements the
 built so new groups and subcommands (`content upload`, `content ls`, repository
 administration, ...) slot in without disturbing what exists.
 
-Depends only on the Go standard library.
+Dependencies are limited to the OS keyring integration (`go-keyring`,
+`godbus`, `golang.org/x/term`).
 
 ## Install
 
@@ -18,7 +19,7 @@ Download a binary from the [releases page](../../releases), or build from source
 go install github.com/EugenMayer/nexus-cli@latest
 ```
 
-The binary is named `nexus`.
+The binary is named `nexus-cli` (release assets: `nexus-cli-<os>-<arch>`).
 
 ## Usage
 
@@ -27,8 +28,37 @@ nexus <command> [subcommand] [flags] [args]
 ```
 
 Run `nexus` for the command list, or `nexus <command> -h` for details on any
-command. Credentials for any command come from `-user`/`-pass` or the
-`NEXUS_USER`/`NEXUS_PASS` environment variables.
+command.
+
+### Credentials
+
+Log in once and the credentials are kept in the OS keyring (GNOME Keyring,
+KWallet, KeePassXC via Secret Service on Linux, Keychain on macOS, Credential
+Manager on Windows), so they don't live in your shell history or environment:
+
+```sh
+nexus auth login -url https://nexus.example.com   # prompts, tests, then stores
+pass show work/nexus | nexus auth login -user admin -with-password
+nexus auth status -url https://nexus.example.com  # sources + login test, exit 1 on failure
+nexus auth logout
+```
+
+`-url` is optional for `login` and `status`; without it the credentials are
+stored or shown but not tested.
+
+Commands resolve the username and password in this order:
+
+1. `-user` / `-pass`; `-pass` also takes a reference: `keychain:<path>` (OS
+   keyring), `env:<NAME>`, `cmd:<command>` (output of e.g. `pass show
+   work/nexus`); prefix `literal:` if the password itself starts with one of
+   these
+2. the `NEXUS_USER` / `NEXUS_PASS` environment variables
+3. the OS keyring, as stored by `nexus auth login` (entries `nexus.user` and
+   `nexus.pass`, account `nexus`)
+
+On Linux without a D-Bus session (SSH, servers, CI) the keyring is reported
+unavailable instead of hanging; use `NEXUS_USER`/`NEXUS_PASS` or
+`-pass cmd:...` there.
 
 ### `content rm`
 
@@ -59,12 +89,14 @@ Quote patterns in your shell so `$`, `\`, and `.` reach the program intact.
 ```
 main.go                     root command; registers top-level groups
 internal/cli/               command framework (Command tree + dispatcher)
-internal/config/            shared connection flags (-url/-repo/creds)
+internal/config/            shared connection flags (-url/-repo/creds), credential resolution
 internal/nexus/             Nexus REST client + regexp matcher
+pkg/keychain/               OS keyring library (see its README), importable by other projects
 cmd/content/                the "content" command group
   content.go                group constructor, registers subcommands
   rm.go                     "content rm"
   util.go                   small shared helpers
+cmd/auth/                   the "auth" command group (login/logout/status)
 ```
 
 `internal/cli` is a minimal, dependency-free framework over the standard
@@ -88,10 +120,13 @@ That's the whole change — help, flag parsing, and dispatch are handled by the
 framework. To add a brand-new top-level group, create a package under `cmd/`
 with a `New() *cli.Command` constructor and register it in `main.go`.
 
-Any command that needs the API adds two lines in its `Run`:
+Any command that needs the API adds a few lines in its `Run`:
 
 ```go
-client := conn.Client()
+client, err := conn.Client(ctx) // resolves credentials, incl. the OS keyring
+if err != nil {
+	return err
+}
 assets, err := client.ListAssets(ctx, conn.Repo)
 ```
 
@@ -112,14 +147,37 @@ commands require them.
 ## Development
 
 ```sh
-go test -race ./...
-go vet ./...
-go build -o nexus .
+make test        # go test -race ./...
+make vet
+make fmt-check
+make build       # ./dist/nexus-cli for the current platform
+make dist        # all release platforms + checksums.txt into ./dist
 ```
 
-CI (see `.github/workflows/build.yml`) runs gofmt/vet/test on every push and
-PR, cross-compiles for linux/darwin/windows on amd64/arm64, and attaches
-binaries to a GitHub release when a `v*` tag is pushed.
+CI (`.github/workflows/build.yml`) runs the format check, vet, tests and
+`make dist` on every push to `main` and on pull requests.
+
+## Releasing
+
+Push a semver tag:
+
+```sh
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+`.github/workflows/release.yml` then checks the tag is `vMAJOR.MINOR.PATCH`
+(optionally `-pre`; such tags become GitHub pre-releases), runs the checks,
+cross-compiles linux/darwin/windows on amd64/arm64 with the tag as version,
+and creates a GitHub release with the binaries, `checksums.txt` and generated
+notes. Finally it registers the version with the Go module proxy, so
+
+```sh
+go install github.com/EugenMayer/nexus-cli@v1.2.0
+go get github.com/EugenMayer/nexus-cli/pkg/keychain@v1.2.0
+```
+
+work right away and the version shows up on pkg.go.dev.
 
 ## License
 

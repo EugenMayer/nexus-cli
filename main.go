@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/EugenMayer/nexus-cli/cmd/auth"
 	"github.com/EugenMayer/nexus-cli/cmd/content"
 	"github.com/EugenMayer/nexus-cli/internal/cli"
 )
@@ -34,13 +35,14 @@ func run(args []string) int {
 		Name:    "nexus",
 		Summary: "Extensible command-line client for Sonatype Nexus 3",
 		Long: "A command-line client for Sonatype Nexus 3, organized as a tree\n" +
-			"of commands. Global credentials for any command may be supplied\n" +
-			"via -user/-pass flags or the NEXUS_USER/NEXUS_PASS environment\n" +
-			"variables.",
+			"of commands. Credentials for any command come from -user/-pass,\n" +
+			"the NEXUS_USER/NEXUS_PASS environment variables, or the OS keyring\n" +
+			"(see \"nexus auth\").",
 	}
 
 	// Register top-level command groups here.
 	root.Add(
+		auth.New(),
 		content.New(),
 		versionCommand(),
 	)

@@ -5,6 +5,7 @@ package nexus
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -105,4 +106,26 @@ func (c *Client) DeleteAsset(ctx context.Context, id string) error {
 func readErr(r io.Reader) string {
 	b, _ := io.ReadAll(io.LimitReader(r, 1024))
 	return strings.TrimSpace(string(b))
+}
+
+// ErrUnauthorized is returned by CheckAuth when Nexus rejects the credentials.
+var ErrUnauthorized = errors.New("invalid credentials")
+
+// CheckAuth verifies the client's credentials with a cheap authenticated
+// request. A 403 counts as success: the credentials are valid, the user just
+// lacks the privilege to browse repositories.
+func (c *Client) CheckAuth(ctx context.Context) error {
+	resp, err := c.do(ctx, http.MethodGet, c.base+"/service/rest/v1/repositories")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusForbidden:
+		return nil
+	case http.StatusUnauthorized:
+		return ErrUnauthorized
+	default:
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, readErr(resp.Body))
+	}
 }
